@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inspect Pong</title>
+</head>
+<body id="pongV1Standalone">
+<script>
+(function() {
+  var standalone = document.body.id === "pongV1Standalone";
+
+  function runPongV1() {
+    if (window.__pongOn) return;
+    if (window.__pongOff) window.__pongOff();
+
+    window.__pongOn = true;
+    var wrap = document.createElement("div");
+    wrap.id = "__pongWrap";
+    wrap.style.cssText = standalone
+      ? "margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#000;font-family:serif;color:#fff;padding:16px;box-sizing:border-box;"
+      : "position:fixed;inset:0;z-index:2147483640;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#000;font-family:serif;color:#fff;overflow:auto;padding:16px;box-sizing:border-box;";
+
+    wrap.innerHTML =
+      '<div id="__pongV1Menu" style="text-align:center;max-width:360px;">' +
+      "<h2 style=\"margin:0 0 16px;font-size:1.4em;\">Inspect Pong</h2>" +
+      "<p style=\"margin:0 0 12px;\"><strong>Mode</strong></p>" +
+      '<label style="display:block;margin:6px 0;"><input type="radio" name="p1mode" value="bot" checked> Play vs Bot</label>' +
+      '<label style="display:block;margin:6px 0;"><input type="radio" name="p1mode" value="player"> 2 Player (W/S vs Arrows)</label>' +
+      '<div id="__pongV1DiffBox" style="margin:16px 0;">' +
+      "<p style=\"margin:0 0 8px;\"><strong>Bot difficulty</strong></p>" +
+      '<label style="display:block;margin:4px 0;"><input type="radio" name="p1diff" value="easy"> Easy — paddle just moves up and down</label>' +
+      '<label style="display:block;margin:4px 0;"><input type="radio" name="p1diff" value="hard" checked> Hard — tracks the ball, sometimes misses</label>' +
+      '<label style="display:block;margin:4px 0;"><input type="radio" name="p1diff" value="impossible"> Impossible — always returns the ball</label>' +
+      "</div>" +
+      "<p style=\"margin:0 0 6px;\"><strong>Number of balls</strong> (1–5)</p>" +
+      '<input type="number" id="__pongV1Balls" value="1" min="1" max="5" style="width:60px;padding:4px;font-family:serif;">' +
+      "<p style=\"margin:12px 0 6px;\"><strong>Ball speed</strong> (1–15)</p>" +
+      '<input type="number" id="__pongV1BallSpd" value="5" min="1" max="15" style="width:60px;padding:4px;font-family:serif;">' +
+      '<button type="button" id="__pongV1Start" style="font-family:serif;padding:8px 20px;cursor:pointer;margin-top:12px;display:block;margin-left:auto;margin-right:auto;">Start game</button>' +
+      (standalone ? '<p style="margin-top:16px;font-size:0.95em;"><a href="index.html" style="color:#fff">Terrible settings</a></p>' : "") +
+      "</div>" +
+      '<canvas id="pongCanvas" width="600" height="400" style="display:none;border:2px solid #fff;"></canvas>' +
+      '<button type="button" id="__pongV1MenuBtn" style="display:none;font-family:serif;padding:8px 16px;cursor:pointer;margin-top:10px;">Back to menu (Esc)</button>' +
+      '<p id="__pongV1Hint" style="display:none;margin:12px 0 0;text-align:center;font-size:0.95em;"></p>';
+
+    if (standalone) document.body.innerHTML = "";
+    (standalone ? document.body : document.documentElement).appendChild(wrap);
+
+    var menu = document.getElementById("__pongV1Menu");
+    var diffBox = document.getElementById("__pongV1DiffBox");
+    var canvas = document.getElementById("pongCanvas");
+    var menuBtn = document.getElementById("__pongV1MenuBtn");
+    var hint = document.getElementById("__pongV1Hint");
+    var ctx = canvas.getContext("2d");
+
+    var W = 600, H = 400, PH = 60, PW = 10, SPD = 7, BS = 8;
+    var leftY = (H - PH) / 2, rightY = (H - PH) / 2;
+    var balls = [];
+    var leftScore = 0, rightScore = 0;
+    var mode = "bot", diff = "hard", numBalls = 1, ballSpeed = 5, playing = false, raf = 0;
+    var keys = { w: 0, s: 0, up: 0, down: 0 };
+    var easyDir = 1;
+
+    document.querySelectorAll('input[name="p1mode"]').forEach(function(r) {
+      r.addEventListener("change", function() {
+        diffBox.style.display = r.value === "bot" ? "block" : "none";
+      });
+    });
+
+    function getMode() {
+      var r = document.querySelector('input[name="p1mode"]:checked');
+      return r ? r.value : "bot";
+    }
+    function getDiff() {
+      var r = document.querySelector('input[name="p1diff"]:checked');
+      return r ? r.value : "hard";
+    }
+    function getNumBalls() {
+      var n = parseInt(document.getElementById("__pongV1Balls").value, 10);
+      return Math.min(5, Math.max(1, n || 1));
+    }
+    function getBallSpeed() {
+      var n = parseInt(document.getElementById("__pongV1BallSpd").value, 10);
+      return Math.min(15, Math.max(1, n || 5));
+    }
+
+    function mkBall(towardRight, color) {
+      var sp = ballSpeed, b = {
+        x: W / 2 + (Math.random() - 0.5) * 50,
+        y: H / 2 + (Math.random() - 0.5) * 100,
+        dx: towardRight ? sp : -sp,
+        dy: (Math.random() > 0.5 ? 1 : -1) * (sp * 0.5 + Math.random() * sp * 0.4),
+        color: color || "#fff"
+      };
+      if (Math.abs(b.dy) < 1) b.dy = sp * 0.5;
+      return b;
+    }
+
+    function initBalls() {
+      var i;
+      balls = [];
+      for (i = 0; i < numBalls; i++) {
+        balls.push(mkBall(i % 2 === 0, "hsl(" + (Math.random() * 360) + ",100%,70%)"));
+      }
+    }
+
+    function primaryBall() {
+      var j;
+      for (j = 0; j < balls.length; j++) {
+        if (balls[j].dx < 0 && balls[j].x < W / 2) return balls[j];
+      }
+      return balls[0];
+    }
+
+    function draw() {
+      var i, b;
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "#FFF";
+      for (i = 0; i < H; i += 15) ctx.fillRect(W / 2 - 1, i, 2, 8);
+      ctx.fillRect(10, leftY, PW, PH);
+      ctx.fillRect(W - 20, rightY, PW, PH);
+      for (i = 0; i < balls.length; i++) {
+        b = balls[i];
+        ctx.fillStyle = b.color;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, BS, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = "#FFF";
+      ctx.font = "28px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText(leftScore, W / 4, 36);
+      ctx.fillText(rightScore, (3 * W) / 4, 36);
+      ctx.textAlign = "left";
+    }
+
+    function updateBot() {
+      var pb, ty, dy, step, randomOffset, targetWithOffset, eff;
+      if (mode !== "bot") return;
+      pb = primaryBall();
+      if (diff === "easy") {
+        leftY += easyDir * 4;
+        if (leftY <= 0) { leftY = 0; easyDir = 1; }
+        if (leftY >= H - PH) { leftY = H - PH; easyDir = -1; }
+        return;
+      }
+      if (diff === "impossible") {
+        if (pb.dx < 0) {
+          leftY = pb.y - PH / 2;
+          leftY = Math.max(0, Math.min(H - PH, leftY));
+        }
+        return;
+      }
+      if (diff === "hard" && pb.dx < 0 && pb.x < W * 0.65 && Math.random() > 0.06) {
+        ty = pb.y - PH / 2;
+        dy = ty - leftY;
+        step = Math.min(Math.abs(dy), SPD * 0.5) * Math.sign(dy);
+        if (Math.random() > 0.12) leftY += step;
+        leftY = Math.max(0, Math.min(H - PH, leftY));
+      }
+    }
+
+    function update() {
+      var j, b, toReset, k, hitLeft, hitRight;
+      if (!playing) return;
+      toReset = [];
+      for (j = 0; j < balls.length; j++) {
+        b = balls[j];
+        b.x += b.dx;
+        b.y += b.dy;
+        if (b.y + BS >= H) { b.y = H - BS; b.dy = -Math.abs(b.dy); }
+        if (b.y - BS <= 0) { b.y = BS; b.dy = Math.abs(b.dy); }
+
+        hitLeft = b.x - BS <= 10 + PW && b.dx < 0 && b.y >= leftY && b.y <= leftY + PH;
+        hitRight = b.x + BS >= W - 20 && b.dx > 0 && b.y >= rightY && b.y <= rightY + PH;
+        if (hitLeft) {
+          b.dx = Math.abs(b.dx) * 1.03;
+          b.dy += (b.y - (leftY + PH / 2)) * 0.12;
+        }
+        if (hitRight) {
+          b.dx = -Math.abs(b.dx) * 1.03;
+          b.dy += (b.y - (rightY + PH / 2)) * 0.12;
+        }
+        if (b.x - BS < 0) {
+          rightScore++;
+          toReset.push({ i: j, right: true });
+        }
+        if (b.x + BS > W) {
+          leftScore++;
+          toReset.push({ i: j, right: false });
+        }
+      }
+      for (k = 0; k < toReset.length; k++) {
+        balls[toReset[k].i] = mkBall(toReset[k].right, balls[toReset[k].i].color);
+      }
+      updateBot();
+    }
+
+    function handleInput() {
+      if (!playing) return;
+      if (mode === "player") {
+        if (keys.w) leftY -= SPD;
+        if (keys.s) leftY += SPD;
+      }
+      if (keys.up) rightY -= SPD;
+      if (keys.down) rightY += SPD;
+      leftY = Math.max(0, Math.min(H - PH, leftY));
+      rightY = Math.max(0, Math.min(H - PH, rightY));
+    }
+
+    function loop() {
+      if (!window.__pongOn || !playing) return;
+      handleInput();
+      update();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+
+    function showMenu() {
+      playing = false;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      menu.style.display = "block";
+      canvas.style.display = "none";
+      menuBtn.style.display = "none";
+      hint.style.display = "none";
+      keys.w = 0; keys.s = 0; keys.up = 0; keys.down = 0;
+    }
+
+    function startGame() {
+      mode = getMode();
+      diff = getDiff();
+      numBalls = getNumBalls();
+      ballSpeed = getBallSpeed();
+      leftScore = 0;
+      rightScore = 0;
+      leftY = (H - PH) / 2;
+      rightY = (H - PH) / 2;
+      easyDir = 1;
+      playing = true;
+      menu.style.display = "none";
+      canvas.style.display = "block";
+      menuBtn.style.display = "block";
+      hint.style.display = "block";
+      hint.textContent = (mode === "player"
+        ? "Left: W / S  ·  Right: Arrow Up / Down"
+        : "You: Arrow Up / Down (right)  ·  Bot on left (" + diff + ")") +
+        "  ·  " + numBalls + " ball" + (numBalls > 1 ? "s" : "") +
+        "  ·  speed " + ballSpeed + "  ·  Esc = menu";
+      initBalls();
+      if (raf) cancelAnimationFrame(raf);
+      loop();
+    }
+
+    function onKeyDown(e) {
+      if (playing && e.key === "Escape") { showMenu(); e.preventDefault(); return; }
+      if (e.key === "w" || e.key === "W") { keys.w = 1; e.preventDefault(); }
+      if (e.key === "s" || e.key === "S") { keys.s = 1; e.preventDefault(); }
+      if (e.key === "ArrowUp") { keys.up = 1; e.preventDefault(); }
+      if (e.key === "ArrowDown") { keys.down = 1; e.preventDefault(); }
+    }
+    function onKeyUp(e) {
+      if (e.key === "w" || e.key === "W") keys.w = 0;
+      if (e.key === "s" || e.key === "S") keys.s = 0;
+      if (e.key === "ArrowUp") keys.up = 0;
+      if (e.key === "ArrowDown") keys.down = 0;
+    }
+
+    document.getElementById("__pongV1Start").addEventListener("click", startGame);
+    menuBtn.addEventListener("click", showMenu);
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
+
+    window.__pongOff = function() {
+      window.__pongOn = false;
+      playing = false;
+      if (raf) cancelAnimationFrame(raf);
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keyup", onKeyUp, true);
+      wrap.remove();
+      delete window.__pongOn;
+      delete window.__pongOff;
+    };
+  }
+
+  runPongV1();
+})();
+</script>
+</body>
+</html>

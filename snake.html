@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Inspect Snake</title>
+<style>
+  body { margin: 0; font-family: Georgia, serif; background: #f5f5f0; color: #222; }
+  .demo { max-width: 640px; margin: 24px auto; padding: 0 20px; line-height: 1.6; }
+  .demo h1 { font-size: 1.5em; }
+  .demo a { color: #06c; }
+</style>
+</head>
+<body id="snakeStandalone">
+<div class="demo" id="snakeDemoText">
+  <h1>Word Snake demo</h1>
+  <p>Arrow keys move the snake. It eats <strong>one word at a time</strong> on the page. Try the hub script on any site for maximum chaos.</p>
+  <p><a href="index.html">Back to Terrible settings</a></p>
+</div>
+<script>
+(function(){
+  var standalone = document.body.id === "snakeStandalone";
+
+  function runSnake(){
+    if(window.__snakeOn)return;
+    if(window.__snakeOff)window.__snakeOff();
+    window.__snakeOn=true;
+
+    var SPEED=80,STEP=10,SEG=20,MAX_LEN=80,PAD=4;
+    var snake=[{x:120,y:120}],dir="right",grow=0,score=0,paused=false;
+    var tickId=0;
+
+    var canvas=document.createElement("canvas");
+    canvas.id="__snakeCanvas";
+    canvas.style.cssText="position:fixed;top:0;left:0;z-index:2147483645;pointer-events:none;";
+    document.documentElement.appendChild(canvas);
+    var ctx=canvas.getContext("2d");
+
+    var hud=document.createElement("div");
+    hud.style.cssText="position:fixed;top:12px;left:12px;z-index:2147483646;padding:8px 14px;background:rgba(0,0,0,0.72);color:#cfc;font:14px monospace;border-radius:6px;pointer-events:none;border:1px solid #393;";
+    hud.textContent="Score: 0 · P pause";
+    document.documentElement.appendChild(hud);
+
+    function resize(){
+      canvas.width=window.innerWidth;
+      canvas.height=window.innerHeight;
+    }
+    resize();
+    window.addEventListener("resize",resize);
+
+    function wrapWords(){
+      var walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{
+        acceptNode:function(n){
+          var p,insideDemo=false;
+          if(!n.nodeValue||!n.nodeValue.trim())return NodeFilter.FILTER_REJECT;
+          p=n.parentElement;
+          while(p){
+            if(p.tagName==="SCRIPT"||p.tagName==="STYLE"||p.tagName==="CANVAS")return NodeFilter.FILTER_REJECT;
+            if(p.id==="__snakeCanvas")return NodeFilter.FILTER_REJECT;
+            if(standalone&&p.id==="snakeDemoText")insideDemo=true;
+            p=p.parentElement;
+          }
+          if(standalone&&!insideDemo)return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      var nodes=[],n;
+      while(walker.nextNode())nodes.push(walker.currentNode);
+      nodes.forEach(function(node){
+        if(node.parentElement&&node.parentElement.getAttribute("data-snake-word"))return;
+        var parts=node.nodeValue.split(/(\s+)/),frag=document.createDocumentFragment(),i,w,span;
+        for(i=0;i<parts.length;i++){
+          w=parts[i];
+          if(!w.trim())frag.appendChild(document.createTextNode(w));
+          else{
+            span=document.createElement("span");
+            span.textContent=w;
+            span.setAttribute("data-snake-word","1");
+            span.style.display="inline-block";
+            span.style.position="relative";
+            frag.appendChild(span);
+          }
+        }
+        if(node.parentNode)node.parentNode.replaceChild(frag,node);
+      });
+    }
+    wrapWords();
+
+    function roundRect(x,y,w,h,r){
+      if(ctx.roundRect){ctx.beginPath();ctx.roundRect(x,y,w,h,r);return;}
+      ctx.beginPath();
+      ctx.moveTo(x+r,y);
+      ctx.arcTo(x+w,y,x+w,y+h,r);
+      ctx.arcTo(x+w,y+h,x,y+h,r);
+      ctx.arcTo(x,y+h,x,y,r);
+      ctx.arcTo(x,y,x+w,y,r);
+      ctx.closePath();
+    }
+
+    function drawSegment(seg,i,len,isHead){
+      var t=len>1?i/(len-1):0;
+      if(isHead){
+        var hx=seg.x,hy=seg.y;
+        ctx.fillStyle="#2a2a2a";
+        roundRect(hx+1,hy+1,SEG,SEG,9);
+        ctx.fill();
+        ctx.fillStyle="#7fff2a";
+        roundRect(hx,hy,SEG,SEG,9);
+        ctx.fill();
+        ctx.strokeStyle="#1a6b12";
+        ctx.lineWidth=2;
+        roundRect(hx,hy,SEG,SEG,9);
+        ctx.stroke();
+        ctx.fillStyle="#111";
+        var ex=hx+SEG*0.55,ey=hy+SEG*0.35,er=2.8;
+        if(dir==="up"){ex=hx+SEG*0.35;ey=hy+SEG*0.28;ctx.fillRect(hx+SEG*0.55,ey,er*2,er*2);}
+        else if(dir==="down"){ex=hx+SEG*0.35;ey=hy+SEG*0.55;}
+        else if(dir==="left"){ex=hx+SEG*0.22;ey=hy+SEG*0.35;}
+        else{ex=hx+SEG*0.55;ey=hy+SEG*0.35;}
+        ctx.beginPath();
+        ctx.arc(ex,ey,er,0,Math.PI*2);
+        ctx.arc(ex+(dir==="left"?-5:dir==="right"?5:0),ey+(dir==="up"?-4:dir==="down"?4:0),er*0.65,0,Math.PI*2);
+        ctx.fill();
+        ctx.fillStyle="#ff6";
+        var tx=hx+SEG/2,ty=hy+SEG/2;
+        if(dir==="right"){ctx.beginPath();ctx.moveTo(hx+SEG-2,ty);ctx.lineTo(hx+SEG+5,ty-2);ctx.lineTo(hx+SEG+5,ty+2);ctx.fill();}
+        if(dir==="left"){ctx.beginPath();ctx.moveTo(hx+2,ty);ctx.lineTo(hx-5,ty-2);ctx.lineTo(hx-5,ty+2);ctx.fill();}
+        if(dir==="up"){ctx.beginPath();ctx.moveTo(tx,hy+2);ctx.lineTo(tx-2,hy-5);ctx.lineTo(tx+2,hy-5);ctx.fill();}
+        if(dir==="down"){ctx.beginPath();ctx.moveTo(tx,hy+SEG-2);ctx.lineTo(tx-2,hy+SEG+5);ctx.lineTo(tx+2,hy+SEG+5);ctx.fill();}
+        return;
+      }
+      var g=Math.floor(80+t*120),b=Math.floor(40+t*30);
+      ctx.fillStyle="rgb(0,"+g+","+b+")";
+      roundRect(seg.x+1,seg.y+1,SEG-1,SEG-1,6);
+      ctx.fill();
+      ctx.fillStyle="rgb(20,"+Math.floor(180-t*80)+",30)";
+      roundRect(seg.x,seg.y,SEG-1,SEG-1,6);
+      ctx.fill();
+      ctx.strokeStyle="rgba(0,80,0,0.5)";
+      ctx.lineWidth=1;
+      roundRect(seg.x,seg.y,SEG-1,SEG-1,6);
+      ctx.stroke();
+    }
+
+    function draw(){
+      var i;
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle="rgba(0,0,0,0.08)";
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      for(i=snake.length-1;i>=0;i--)drawSegment(snake[i],i,snake.length,i===0);
+      if(paused){
+        ctx.fillStyle="rgba(0,0,0,0.45)";
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle="#fff";
+        ctx.font="bold 28px Arial";
+        ctx.textAlign="center";
+        ctx.fillText("PAUSED",canvas.width/2,canvas.height/2);
+        ctx.textAlign="left";
+      }
+      hud.textContent="Score: "+score+" · Len "+snake.length+" · P pause";
+    }
+
+    function tryEat(head){
+      var els=document.querySelectorAll("span[data-snake-word]"),i,el,r;
+      for(i=0;i<els.length;i++){
+        el=els[i];
+        if(el.getAttribute("data-snake-eaten"))continue;
+        r=el.getBoundingClientRect();
+        if(head.x+PAD<r.right&&head.x+SEG-PAD>r.left&&head.y+PAD<r.bottom&&head.y+SEG-PAD>r.top){
+          el.style.visibility="hidden";
+          el.setAttribute("data-snake-eaten","1");
+          grow+=1;
+          score++;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function move(){
+      if(paused)return;
+      var head={x:snake[0].x,y:snake[0].y};
+      if(dir==="up")head.y-=STEP;
+      if(dir==="down")head.y+=STEP;
+      if(dir==="left")head.x-=STEP;
+      if(dir==="right")head.x+=STEP;
+      head.x=((head.x%canvas.width)+canvas.width)%canvas.width;
+      head.y=((head.y%canvas.height)+canvas.height)%canvas.height;
+      snake.unshift(head);
+      if(grow>0)grow--;
+      else snake.pop();
+      while(snake.length>MAX_LEN)snake.pop();
+      tryEat(head);
+    }
+
+    function onKey(e){
+      if(e.key==="ArrowUp"&&dir!=="down")dir="up";
+      if(e.key==="ArrowDown"&&dir!=="up")dir="down";
+      if(e.key==="ArrowLeft"&&dir!=="right")dir="left";
+      if(e.key==="ArrowRight"&&dir!=="left")dir="right";
+      if(e.key==="p"||e.key==="P"){paused=!paused;e.preventDefault();}
+    }
+
+    function loop(){if(!window.__snakeOn)return;move();draw();}
+    document.addEventListener("keydown",onKey,true);
+    tickId=setInterval(loop,SPEED);
+    draw();
+
+    window.__snakeOff=function(){
+      window.__snakeOn=false;
+      clearInterval(tickId);
+      window.removeEventListener("resize",resize);
+      document.removeEventListener("keydown",onKey,true);
+      canvas.remove();
+      hud.remove();
+      document.querySelectorAll("[data-snake-eaten]").forEach(function(el){
+        el.style.visibility="";
+        el.removeAttribute("data-snake-eaten");
+      });
+      delete window.__snakeOn;
+      delete window.__snakeOff;
+      delete window.snakeGameActive;
+    };
+    window.snakeGameActive=true;
+  }
+
+  runSnake();
+})();
+</script>
+</body>
+</html>
